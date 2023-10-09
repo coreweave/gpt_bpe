@@ -315,31 +315,33 @@ func fetchTextFileS3(svc S3Client, bucketName, objectKey string) (string, error)
 	return text.String(), nil
 }
 
-// removeS3Prefix splits the input into the bucket and to ensure that s3:// is present
-func removeS3Prefix(input string) (hasS3Prefix bool, remainder string, s3FilePath string) {
-	prefix := "s3://"
-	if strings.HasPrefix(input, prefix) {
-		//if it is just s3:// then return empty string
-		if len(input) == len(prefix) {
-			return false, input, ""
-		}
-		//if it is s3://bucket then return bucket and empty string
-		if strings.Index(input[len(prefix):], "/") == -1 {
-			return true, input[len(prefix):], ""
-		}
-		//if it is s3://bucket/ then return bucket and empty string
-		if strings.Index(input[len(prefix):], "/") == len(input)-len(prefix)-1 {
-			return true, input[len(prefix) : len(input)-1], ""
-		}
-		//if it is s3://bucket/path then return bucket and path
-		if strings.Index(input[len(prefix):], "/") > 0 {
-			idxOfFirstSlash := strings.Index(input[len(prefix):], "/")
-			bucket := input[len(prefix) : len(prefix)+idxOfFirstSlash]
-			pathOfFile := input[len(prefix)+idxOfFirstSlash+1:]
-			return true, bucket, pathOfFile
+// ParseS3String identifies, and splits the s3 filepath into the bucket and path.
+func ParseS3String(input string, keepPrefix bool) (hasPrefix bool, bucketName string, s3FilePath string) {
+	s3prefix := "s3://"
+	//if it isn't contained, return the input in the filepath
+	if !strings.Contains(input, s3prefix) {
+		return false, "", input
+	}
+
+	//if it is not the prefix, remove all until the prefix
+	if strings.Index(input, s3prefix) > 0 {
+		if keepPrefix {
+			input = strings.Replace(input, s3prefix, "", 1)
+		} else {
+			//remove the entire prefix
+			input = input[strings.Index(input, s3prefix)+len(s3prefix):]
 		}
 	}
-	return false, input, ""
+
+	//break it up into bucket and path
+	if strings.Index(input, "/") == -1 {
+		bucketName = input
+		s3FilePath = ""
+	} else {
+		bucketName = input[:strings.Index(input, "/")]
+		s3FilePath = input[strings.Index(input, "/")+1:]
+	}
+	return true, bucketName, s3FilePath
 }
 
 // ReadTextsFromS3 reads text files recursively from all prefixes in an S3 bucket.
@@ -1192,6 +1194,18 @@ func main() {
 		log.Fatal("Sampling parameter out of the 0-100 bounds")
 	}
 
+	hasS3Prefix, s3Bucket, s3FilePath := ParseS3String(*inputDir, false)
+	_, _, s3outputFilePath := ParseS3String(*outputFile, true)
+
+	if hasS3Prefix && *s3Endpoint == "" {
+		flag.Usage()
+		log.Fatal("Must provide S3 Endpoint if fetching data from CW object storage")
+	} else if hasS3Prefix && *s3Endpoint != "" {
+		log.Printf("S3 path: %s / %s\n", s3Bucket, s3FilePath)
+		outputFile = &s3outputFilePath
+		inputDir = &s3FilePath
+	}
+
 	log.Printf("Tokenizer definition: %s\n", *tokenizerId)
 	log.Printf("Tokenizer input source: %s\n", *inputDir)
 	log.Printf("Tokenizer output: %s\n", *outputFile)
@@ -1256,13 +1270,6 @@ func main() {
 	}
 	if _, tokErr := textsTokenizer.InitTokenizer(); tokErr != nil {
 		log.Fatal(tokErr)
-	}
-
-	hasS3Prefix, s3Bucket, s3FilePath := removeS3Prefix(*inputDir)
-
-	if hasS3Prefix && *s3Endpoint == "" {
-		flag.Usage()
-		log.Fatal("Must provide S3 Endpoint if fetching data from CW object storage")
 	}
 
 	// Declare textReaders
