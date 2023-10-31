@@ -10,7 +10,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
